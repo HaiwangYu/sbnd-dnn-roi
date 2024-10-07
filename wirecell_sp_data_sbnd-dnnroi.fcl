@@ -10,7 +10,7 @@
 #include "messages_sbnd.fcl"
 #include "rootoutput_sbnd.fcl"
 #
-#include "wcsp_data_sbnd-dnnroi.fcl"
+#include "wcsp_data_sbnd-dnnroi-save-both.fcl"
 
 
 process_name: WCLS

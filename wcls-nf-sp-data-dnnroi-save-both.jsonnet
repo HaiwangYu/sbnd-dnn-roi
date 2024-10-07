@@ -160,7 +160,9 @@ local sp_maker = import 'pgrapher/experiment/sbnd/sp.jsonnet';
 local sp_override = if use_dnnroi then {
     sparse: true,
     use_roi_debug_mode: true,
+    save_negtive_charge: false, // no negative charge in gauss, default is false
     use_multi_plane_protection: true,
+    do_not_mp_protect_traditional: true, // do_not_mp_protect_traditional to make a clear ref, defualt is false 
     mp_tick_resolution: 10,
     tight_lf_tag: "",
     // loose_lf_tag: "",
@@ -175,7 +177,7 @@ local sp_override = if use_dnnroi then {
 };
 //local sp = sp_maker(params, tools, { sparse: sigoutform == 'sparse' });
 local sp = sp_maker(params, tools, sp_override);
-local sp_pipes = [sp.make_sigproc(a) for a in tools.anodes];
+local osps = [sp.make_sigproc(a) for a in tools.anodes];
 
 local dnnroi = import 'dnnroi.jsonnet';
 local ts = {
@@ -201,50 +203,49 @@ local fanout = function (name, multiplicity=2)
     },
   }, nin=1, nout=multiplicity);
 
-// local nfsp_pipes = [
-//   g.pipeline([
-//                chsel_pipes[n],
-//                //sinks.orig_pipe[n],
+local use_magnify = false;
 
-//                nf_pipes[n],
-//                //sinks.raw_pipe[n],
-
-//                sp_pipes[n],
-//                sinks.decon_pipe[n],
-//                //sinks.threshold_pipe[n],
-//                // sinks.debug_pipe[n], // use_roi_debug_mode=true in sp.jsonnet
-//              ] + if use_dnnroi then [
-//                dnnroi(tools.anodes[n], ts, output_scale=1, nchunks=nchunks),
-//                sinks.dnnroi_pipe[n]]
-//                else [],
-//              'nfsp_pipe_%d' % n)
-//   for n in std.range(0, std.length(tools.anodes) - 1)
-// ];
+local sp_pipes = if use_magnify then
+[g.pipeline([osps[n], sinks.decon_pipe[n]], 'sp_pipe_%d' % n) for n in std.range(0, std.length(tools.anodes) - 1)]
+else osps;
 
 local sp_fans = [fanout("sp_fan_%d" % n) for n in std.range(0, std.length(tools.anodes) - 1)];
 local dnnroi_pipes = [ dnnroi(tools.anodes[n], ts, output_scale=1, nchunks=nchunks) for n in std.range(0, std.length(tools.anodes) - 1) ];
 
+local nfsp_pipes = if use_dnnroi then
 // oports: 0: dnnroi, 1: traditional sp
-local nfsp_pipes = [
+[
   g.intern(
     innodes=[chsel_pipes[n]],
-    outnodes=[dnnroi_pipes[n],sinks.decon_pipe[n]],
-    centernodes=[nf_pipes[n], sp_pipes[n], sp_fans[n], sinks.decon_pipe[n]],
+    outnodes=[dnnroi_pipes[n],sp_fans[n]],
+    centernodes=[nf_pipes[n], sp_pipes[n], sp_fans[n]],
     edges=[
       g.edge(chsel_pipes[n], nf_pipes[n], 0, 0),
       g.edge(nf_pipes[n], sp_pipes[n], 0, 0),
       g.edge(sp_pipes[n], sp_fans[n], 0, 0),
       g.edge(sp_fans[n], dnnroi_pipes[n], 0, 0),
-      g.edge(sp_fans[n], sinks.decon_pipe[n], 1, 0),
     ],
     iports=chsel_pipes[n].iports,
-    oports=dnnroi_pipes[n].oports+sinks.decon_pipe[n].oports,
+    oports=dnnroi_pipes[n].oports+[sp_fans[n].oports[1]],
     name='nfsp_pipe_%d' % n,
   )
   for n in std.range(0, std.length(tools.anodes) - 1)
+]
+else
+[
+  g.pipeline([
+               chsel_pipes[n],
+               //sinks.orig_pipe[n],
+               nf_pipes[n],
+               //sinks.raw_pipe[n],
+               sp_pipes[n],
+               //sinks.decon_pipe[n],
+               //sinks.threshold_pipe[n],
+               //sinks.debug_pipe[n], // use_roi_debug_mode=true in sp.jsonnet
+             ],
+             'nfsp_pipe_%d' % n)
+  for n in std.range(0, std.length(tools.anodes) - 1)
 ];
-
-// local fanpipe = f.fanpipe('FrameFanout', nfsp_pipes, 'FrameFanin', 'sn_mag_nf');
 
 local retagger = function(name) g.pnode({
   type: 'Retagger',
@@ -314,9 +315,9 @@ local framefanin = function(name) g.pnode({
 local fanin_apa_dnnroi = framefanin('fanin_apa_dnnroi');
 local fanin_apa_sp = framefanin('fanin_apa_sp');
 
-// local fanpipe = f.fanpipe('FrameFanout', nfsp_pipes, 'FrameFanin', 'sn_mag_nf');
-// local graph = g.pipeline([wcls_input.adc_digits, fanpipe, retagger, wcls_output.sp_signals, sink]);
-local graph = g.intern(
+local fanpipe = f.fanpipe('FrameFanout', nfsp_pipes, 'FrameFanin', 'sn_mag_nf');
+local graph = if use_dnnroi then
+g.intern(
   innodes=[wcls_input.adc_digits],
   outnodes=[],
   centernodes=nfsp_pipes+[fanout_apa, retag_dnnroi, retag_sp, fanin_apa_dnnroi, fanin_apa_sp, wcls_output.spsaver, wcls_output.dnnsaver, sink_dnnroi, sink_sp],
@@ -335,7 +336,9 @@ local graph = g.intern(
     g.edge(retag_sp, wcls_output.spsaver, 0, 0),
     g.edge(wcls_output.spsaver, sink_sp, 0, 0),
   ]
-);
+)
+else
+g.pipeline([wcls_input.adc_digits, fanpipe, retag_sp, wcls_output.spsaver, sink_sp]);
 
 local app = {
   type: 'TbbFlow',
