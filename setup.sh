@@ -7,8 +7,10 @@ path-prepend ()
     export $PATHVARIABLE="$1${!PATHVARIABLE:+:${!PATHVARIABLE}}"
 }
 
-path-prepend `pwd`/moon/wire-cell-data WIRECELL_PATH
+workdir=/exp/sbnd/app/users/yuhw/dnn-roi/
+
+path-prepend $workdir/moon/wire-cell-data WIRECELL_PATH
 path-prepend /exp/sbnd/app/users/yuhw/wire-cell-toolkit/cfg WIRECELL_PATH
-path-prepend `pwd`/moon/wire-cell-toolkit/cfg/ WIRECELL_PATH
+path-prepend $workdir/moon/wire-cell-toolkit/cfg/ WIRECELL_PATH
 
 path-prepend /exp/sbnd/app/users/yuhw/opt/lib64/ LD_LIBRARY_PATH
